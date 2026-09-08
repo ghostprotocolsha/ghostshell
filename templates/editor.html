@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>GhostShell - Editor & Recompile</title>
+    <style>
+        body, html { margin: 0; height: 100%; font-family: sans-serif; color: white; overflow: hidden; }
+        .bg {
+            background-image: url("{{ url_for('static', filename='images/background.jpg') }}");
+            height: 100%; background-position: center; background-repeat: no-repeat; background-size: cover;
+            filter: blur(8px); -webkit-filter: blur(8px); position: absolute; width: 100%; z-index: -1;
+        }
+        .container { display: flex; height: 100vh; position: relative; z-index: 1; background: rgba(0,0,0,0.6); }
+        .sidebar { width: 320px; background: rgba(20, 20, 20, 0.95); padding: 20px; border-right: 1px solid #333; overflow-y: auto; box-sizing: border-box; }
+        .main-content { flex: 1; padding: 20px; display: flex; flex-direction: column; box-sizing: border-box; }
+        .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        
+        /* Search Box & Global Search Results Panel */
+        .search-wrapper { position: relative; }
+        input[type="text"] { padding: 8px; width: 280px; background: #222; border: 1px solid #444; color: white; border-radius: 4px; }
+        #search-results { 
+            display: none; position: absolute; right: 0; top: 40px; width: 450px; max-height: 350px; 
+            background: rgba(20, 20, 20, 0.98); border: 1px solid #555; border-radius: 6px; 
+            overflow-y: auto; z-index: 999; box-shadow: 0 4px 15px rgba(0,0,0,0.7); padding: 10px; 
+        }
+        .search-result-item { padding: 8px 10px; background: rgba(255,152,0,0.08); margin-bottom: 5px; border-radius: 4px; cursor: pointer; border-left: 3px solid #ff9800; font-size: 12px; }
+        .search-result-item:hover { background: rgba(255,152,0,0.25); }
+        .search-file-name { color: #ff9800; font-weight: bold; margin-bottom: 2px; }
+        .search-line-text { color: #ccc; font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+        .editor-wrapper { display: flex; flex: 1; position: relative; background: rgba(15, 15, 15, 0.9); border: 1px solid #333; border-radius: 5px; overflow: hidden; }
+        textarea { flex: 1; background: transparent; color: #00ff00; border: none; padding: 15px; font-family: monospace; font-size: 14px; resize: none; outline: none; line-height: 20px; }
+
+        .recompile-btn { background: #4CAF50; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 5px; cursor: pointer; margin-top: 15px; align-self: flex-end; font-weight: bold; transition: 0.2s; }
+        .recompile-btn:hover { background: #45a049; }
+        .file-item { padding: 6px 10px; cursor: pointer; border-radius: 3px; font-size: 13px; color: #ccc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .file-item:hover { background: #ff9800; color: black; font-weight: bold; }
+        #progress-container { display: none; margin-top: 12px; background: rgba(255,255,255,0.05); padding: 10px; border-radius: 5px; border: 1px solid #444; }
+        progress { width: 100%; height: 16px; accent-color: #ff9800; }
+        
+        #loadingOverlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 999; text-align: center; padding-top: 25vh; }
+        .modal-box { background: rgba(30, 30, 30, 0.95); width: 400px; margin: 0 auto; padding: 25px; border-radius: 8px; border: 1px solid #444; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        .download-btn-style { display: none; background: #ff9800; color: black; text-decoration: none; padding: 12px 20px; font-size: 16px; border-radius: 5px; font-weight: bold; margin-top: 15px; display: inline-block; transition: 0.2s; }
+        .download-btn-style:hover { background: #e68900; }
+    </style>
+    <!-- JSZip library for handling ZIP files inside browser -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script>
+        let loadedFilesMap = {};
+        let currentOpenFilePath = "";
+
+        // Universal Upload Handler
+        async function handleUniversalUpload(event) {
+            const files = event.target.files;
+            if (!files.length) return;
+
+            let file = files[0];
+            if (files.length === 1 && (file.name.endsWith('.zip') || file.type === 'application/zip' || file.type === 'application/x-zip-compressed')) {
+                await processZipFile(file);
+            } else {
+                processExtractedFiles(Array.from(files));
+            }
+        }
+
+        // Phase 1: Unzip ZIP File
+        async function processZipFile(file) {
+            const progressContainer = document.getElementById('progress-container');
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
+            
+            progressContainer.style.display = "block";
+            progressText.innerText = "Extracting ZIP contents...";
+            progressBar.value = 0;
+
+            try {
+                const zip = new JSZip();
+                const zipContent = await zip.loadAsync(file);
+                let extractedFiles = [];
+
+                let fileEntries = Object.keys(zipContent.files);
+                let total = fileEntries.length;
+                let count = 0;
+
+                for (let filename of fileEntries) {
+                    let zipEntry = zipContent.files[filename];
+                    if (!zipEntry.dir) {
+                        let blob = await zipEntry.async("blob");
+                        let fileObj = new File([blob], filename, { type: "text/plain" });
+                        fileObj.webkitRelativePath = filename;
+                        extractedFiles.push(fileObj);
+                    }
+                    count++;
+                    let perc = Math.round((count / total) * 100);
+                    progressBar.value = perc;
+                    progressText.innerText = `Unzipping: ${count} / ${total} files (${perc}%)`;
+                }
+
+                progressText.innerText = "Unzipping complete! Preparing file tree...";
+                setTimeout(() => {
+                    processExtractedFiles(extractedFiles);
+                }, 600);
+
+            } catch (err) {
+                alert("Failed to parse ZIP file: " + err.message);
+                progressContainer.style.display = "none";
+            }
+        }
+
+        // Phase 2: Second Loading - Listing Files into File Tree
+        function processExtractedFiles(files) {
+            const fileListContainer = document.getElementById('file-list');
+            const progressContainer = document.getElementById('progress-container');
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
+            
+            fileListContainer.innerHTML = "";
+            progressContainer.style.display = "block";
+            loadedFilesMap = {};
+            
+            let totalFiles = files.length;
+            let loadedCount = 0;
+            if (totalFiles === 0) {
+                progressContainer.style.display = "none";
+                alert("No files found!");
+                return;
+            }
+
+            let index = 0;
+            function processChunk() {
+                let chunkLimit = Math.min(index + 50, totalFiles);
+                for (; index < chunkLimit; index++) {
+                    let file = files[index];
+                    loadedCount++;
+                    let pathName = file.webkitRelativePath || file.name;
+                    loadedFilesMap[pathName] = file;
+                    
+                    let div = document.createElement('div');
+                    div.className = 'file-item';
+                    div.innerText = pathName;
+                    div.onclick = function() {
+                        openFileInEditor(pathName, file);
+                    };
+                    fileListContainer.appendChild(div);
+                }
+                
+                let percent = Math.round((loadedCount / totalFiles) * 100);
+                progressBar.value = percent;
+                progressText.innerText = `Listing File Tree: ${loadedCount} / ${totalFiles} (${percent}%)`;
+                
+                if (index < totalFiles) {
+                    setTimeout(processChunk, 5);
+                } else {
+                    progressText.innerText = `Complete! Total ${totalFiles} files listed.`;
+                    setTimeout(() => { 
+                        progressContainer.style.display = "none"; 
+                    }, 2000);
+                }
+            }
+            processChunk();
+        }
+
+        // Open specific file into editor
+        function openFileInEditor(pathName, fileObj) {
+            currentOpenFilePath = pathName;
+            let reader = new FileReader();
+            reader.onload = function(e) {
+                document.getElementById('code-editor').value = e.target.result;
+            };
+            reader.readAsText(fileObj);
+        }
+
+        // Global Search Across ALL Uploaded Files
+        async function globalSearch(query) {
+            const resultsContainer = document.getElementById('search-results');
+            resultsContainer.innerHTML = "";
+
+            if (!query.trim() || Object.keys(loadedFilesMap).length === 0) {
+                resultsContainer.style.display = "none";
+                return;
+            }
+
+            resultsContainer.style.display = "block";
+            resultsContainer.innerHTML = `<div style="color: #ff9800; font-size: 11px; padding: 4px;">Searching across all files...</div>`;
+
+            let totalMatches = 0;
+            let htmlOutput = "";
+
+            for (let pathName in loadedFilesMap) {
+                let file = loadedFilesMap[pathName];
+                let textContent = await file.text();
+                let lines = textContent.split('\n');
+
+                lines.forEach((line, index) => {
+                    if (line.toLowerCase().includes(query.toLowerCase())) {
+                        totalMatches++;
+                        let safeLine = line.trim().replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                        
+                        htmlOutput += `
+                            <div class="search-result-item" onclick="jumpToFileAndLine('${pathName}', ${index + 1})">
+                                <div class="search-file-name">📂 ${pathName}</div>
+                                <div class="search-line-text">Line ${index + 1}: ${safeLine}</div>
+                            </div>
+                        `;
+                    }
+                });
+            }
+
+            if (totalMatches === 0) {
+                resultsContainer.innerHTML = `<p style="color: gray; font-size: 12px; padding: 5px;">No matches found in any file.</p>`;
+            } else {
+                resultsContainer.innerHTML = `<div style="color: #aaa; font-size: 11px; margin-bottom: 5px; border-bottom: 1px solid #444; padding-bottom: 3px;">Found ${totalMatches} matches:</div>` + htmlOutput;
+            }
+        }
+
+        // Jump to target file and specific line number when clicking search result
+        async function jumpToFileAndLine(pathName, targetLineNum) {
+            let fileObj = loadedFilesMap[pathName];
+            if (!fileObj) return;
+
+            currentOpenFilePath = pathName;
+            let textContent = await fileObj.text();
+            const editor = document.getElementById('code-editor');
+            editor.value = textContent;
+
+            document.getElementById('search-results').style.display = "none";
+
+            let lines = textContent.split('\n');
+            let charPos = 0;
+            for (let i = 0; i < targetLineNum - 1; i++) {
+                charPos += (lines[i] ? lines[i].length : 0) + 1;
+            }
+
+            editor.focus();
+            let targetLineText = lines[targetLineNum - 1] || "";
+            editor.setSelectionRange(charPos, charPos + targetLineText.length);
+
+            let lineHeight = 20;
+            editor.scrollTop = (targetLineNum - 1) * lineHeight;
+        }
+
+        // Trigger Backend Recompilation
+        async function triggerRecompile() {
+            const fileInput = document.getElementById('projectInput');
+            
+            if (!fileInput.files.length) {
+                alert("Please upload a project ZIP file first!");
+                return;
+            }
+
+            let fileToUpload = fileInput.files[0];
+            if (!fileToUpload.name.endsWith('.zip')) {
+                alert("Recompilation requires a .zip file format. Please upload a ZIP archive.");
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('zip_file', fileToUpload);
+
+            const overlay = document.getElementById('loadingOverlay');
+            const recompileProgressBar = document.getElementById('recompileProgressBar');
+            const recompileProgressText = document.getElementById('recompileProgressText');
+            const downloadBtnArea = document.getElementById('downloadBtnArea');
+            
+            overlay.style.display = 'block';
+            recompileProgressBar.value = 10;
+            recompileProgressText.innerText = "Initializing Apktool... (10%)";
+            downloadBtnArea.style.display = "none";
+
+            let currentProgress = 10;
+            let progressInterval = setInterval(() => {
+                if (currentProgress < 90) {
+                    currentProgress += Math.floor(Math.random() * 8) + 2;
+                    recompileProgressBar.value = currentProgress;
+                    recompileProgressText.innerText = `Recompiling APK... (${currentProgress}%)`;
+                }
+            }, 300);
+
+            try {
+                const response = await fetch('/recompile', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+                clearInterval(progressInterval);
+
+                if (result.status === 'success') {
+                    recompileProgressBar.value = 100;
+                    recompileProgressText.innerText = "Recompilation Complete! (100%)";
+                    
+                    const apkFilename = result.apk_file;
+                    const downloadUrl = '/download_zip/' + apkFilename;
+
+                    // 1. Automatically trigger browser file download
+                    const a = document.createElement('a');
+                    a.href = downloadUrl;
+                    a.download = apkFilename;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+
+                    // 2. Display the persistent download button inside the modal window
+                    downloadBtnArea.href = downloadUrl;
+                    downloadBtnArea.style.display = 'inline-block';
+                } else {
+                    overlay.style.display = 'none';
+                    alert("Recompilation Error: " + result.message);
+                }
+            } catch (err) {
+                clearInterval(progressInterval);
+                overlay.style.display = 'none';
+                alert("Network or Server Error: " + err.message);
+            }
+        }
+
+        function closeLoadingModal() {
+            document.getElementById('loadingOverlay').style.display = 'none';
+        }
+    </script>
+</head>
+<body>
+    <div class="bg"></div>
+
+    <div id="loadingOverlay">
+        <div class="modal-box">
+            <h3 style="color: #ff9800; margin-top: 0;">🔨 Rebuilding APK</h3>
+            <p id="recompileProgressText" style="color: #ccc; font-size: 13px;">Preparing compilation...</p>
+            <progress id="recompileProgressBar" value="0" max="100" style="width: 100%; height: 18px; accent-color: #ff9800;"></progress>
+            <br>
+            <a id="downloadBtnArea" class="download-btn-style" href="#" download>📥 Download APK</a>
+            <br><br>
+            <button onclick="closeLoadingModal()" style="background: #444; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;">Close / Cancel</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="sidebar">
+            <h3 style="color: #ff9800; margin-top:0;">Project Editor</h3>
+            
+            <div style="margin-bottom: 15px; font-size: 13px;">
+                <p style="margin: 4px 0; color: #ff9800;">Upload Project (ZIP or Folder):</p>
+                <input type="file" id="projectInput" accept=".zip,application/zip" multiple onchange="handleUniversalUpload(event)" style="font-size: 11px; color: #aaa; width: 100%;">
+            </div>
+            
+            <div id="progress-container">
+                <progress id="progressBar" value="0" max="100"></progress>
+                <p id="progressText" style="font-size: 11px; color: #ff9800; margin: 5px 0 0 0; text-align: center;">Preparing...</p>
+            </div>
+
+            <hr style="border-color: #333; margin: 15px 0;">
+            <h4 style="color: #ff9800; margin: 0 0 10px 0;">File Tree</h4>
+            <div id="file-list" style="max-height: calc(100vh - 280px); overflow-y: auto;">
+                <p style="color: gray; font-size: 13px;">(Upload ZIP or Folder to view files)</p>
+            </div>
+        </div>
+        
+        <main class="main-content">
+            <div class="top-bar">
+                <button onclick="location.href='/dashboard'" style="background:#333; color:white; border:none; padding:8px 15px; border-radius:4px; cursor:pointer;">Dashboard</button>
+                <h3 style="margin:0; color:#ff9800;">Edit and Recompile</h3>
+                <!-- Global Search Bar with Dropdown Results -->
+                <div class="search-wrapper">
+                    <input type="text" id="searchInput" placeholder="Search across all files..." oninput="globalSearch(this.value)">
+                    <div id="search-results"></div>
+                </div>
+            </div>
+            <div class="editor-wrapper">
+                <textarea id="code-editor" placeholder="Select a file from sidebar tree to view and edit..."></textarea>
+            </div>
+            <button class="recompile-btn" onclick="triggerRecompile()">Recompile (Build APK)</button>
+        </main>
+    </div>
+</body>
+</html>

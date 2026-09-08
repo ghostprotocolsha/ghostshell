@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>GhostShell - Home</title>
+    <style>
+        body, html { margin: 0; height: 100%; font-family: sans-serif; color: white; overflow: hidden; }
+        .bg {
+            background-image: url("{{ url_for('static', filename='images/background.jpg') }}");
+            height: 100%; background-position: center; background-repeat: no-repeat; background-size: cover;
+            position: absolute; width: 100%; z-index: -1;
+        }
+        .content { position: relative; z-index: 1; text-align: center; padding-top: 150px; background: rgba(0,0,0,0.4); height: 100%; box-sizing: border-box; }
+        h1 { font-size: 60px; letter-spacing: 4px; color: #ff9800; text-shadow: 0 0 15px rgba(0,0,0,0.9); }
+        p { color: #ddd; letter-spacing: 1px; font-size: 18px; margin-top: 10px; text-shadow: 1px 1px 3px rgba(0,0,0,0.8); }
+        .btn { 
+            background: #ff9800; color: white; padding: 14px 35px; text-decoration: none; border-radius: 5px; 
+            font-size: 18px; display: inline-block; margin-top: 30px; transition: all 0.2s ease-in-out; font-weight: bold;
+        }
+        /* Hover effect for fast smooth responsiveness */
+        .btn:hover { background: #e68900; transform: scale(1.05); box-shadow: 0 0 15px #ff9800; }
+    </style>
+</head>
+<body>
+    <div class="bg"></div>
+    <div class="content">
+        <h1>GHOSTSHELL</h1>
+        <p>Advanced Android Reverse Engineering & Security Suite</p>
+        <a href="/dashboard" class="btn">Continue Button</a>
+    </div>
+</body>
+</html>

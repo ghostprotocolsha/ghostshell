@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>GhostShell - APK Decompiler</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        body, html { margin: 0; height: 100%; font-family: sans-serif; color: white; }
+        .bg {
+            background-image: url("{{ url_for('static', filename='images/background.jpg') }}");
+            height: 100%; 
+            background-position: center; 
+            background-repeat: no-repeat; 
+            background-size: cover;
+            position: fixed; 
+            width: 100%; 
+            z-index: -1;
+        }
+        .content { position: relative; z-index: 1; padding: 50px; text-align: center; }
+        .box { background: rgba(11, 15, 25, 0.88); padding: 40px; display: inline-block; border-radius: 8px; border: 1px solid #ff9800; width: 450px; box-sizing: border-box; margin-top: 50px; box-shadow: 0 0 20px rgba(255, 152, 0, 0.2); }
+        input, button { margin: 15px 0; padding: 10px; font-size: 16px; width: 100%; box-sizing: border-box; }
+        button { background: #ff9800; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        button:hover { background: #e68900; }
+        button:disabled { background: #666; cursor: not-allowed; }
+        .download-btn { background: #4CAF50; display: inline-block; padding: 12px; color: white; text-decoration: none; border-radius: 4px; margin-top: 15px; width: 100%; box-sizing: border-box; font-weight: bold; text-align: center; }
+        .back-btn { background: #2a3142; color: white; text-decoration: none; display: inline-block; padding: 10px; border-radius: 4px; width: 100%; box-sizing: border-box; margin-top: 10px; font-weight: bold; text-align: center; border: 1px solid #444; }
+        #loadingOverlay { display: none; margin-top: 15px; color: #ff9800; font-weight: bold; }
+        #downloadSection { display: none; margin-top: 20px; }
+        #errorSection { display: none; color: #ff4444; margin-top: 15px; font-size: 14px; }
+
+        #progressTrack {
+            display: none;
+            margin-top: 15px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 6px;
+            overflow: hidden;
+            height: 10px;
+            border: 1px solid #ff9800;
+        }
+        #progressTrack .sweep {
+            height: 100%;
+            width: 40%;
+            background: linear-gradient(90deg, transparent, #ff9800, transparent);
+            animation: sweep 1.2s ease-in-out infinite;
+        }
+        @keyframes sweep {
+            0%   { margin-left: -40%; }
+            100% { margin-left: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg"></div>
+    <div class="content">
+        <div class="box">
+            <h2>APK Decompiler Module</h2>
+
+            <form id="decompileForm" onsubmit="handleDecompile(event)">
+                <input type="file" name="apk_file" id="apkFile" accept=".apk" required><br>
+                <button type="submit" id="submitBtn">Start Decompile</button>
+            </form>
+
+            <div id="loadingOverlay">
+                <p>⚡ Decompiling APK, Please Wait...</p>
+                <p style="font-size: 12px; color: #ccc;">Large files like Spotify take time — please don't close this tab.</p>
+                <div id="progressTrack"><div class="sweep"></div></div>
+            </div>
+
+            <div id="downloadSection">
+                <p style="color: #00ff00; font-size: 14px; font-weight: bold;">✔ Decompilation Complete!</p>
+                <a id="downloadLink" href="#" class="download-btn">Download ZIP File</a>
+                <br><br>
+                <a href="/decompile_page" style="color: #ff9800; font-size: 14px; text-decoration: underline;">Decompile Another APK</a>
+            </div>
+
+            <div id="errorSection">
+                <p><strong>Error:</strong> <span id="errorText"></span></p>
+                <br>
+                <a href="/decompile_page" style="color: #ff9800; font-size: 14px; text-decoration: underline;">Try Again</a>
+            </div>
+
+            <br>
+            <a href="/dashboard" class="back-btn">&larr; Back to Dashboard</a>
+        </div>
+    </div>
+
+    <script>
+        const MAX_UPLOAD_BYTES = 500 * 1024 * 1024; // must match app.config['MAX_CONTENT_LENGTH'] on the backend
+
+        function handleDecompile(event) {
+            event.preventDefault();
+            const fileInput = document.getElementById('apkFile');
+            if (!fileInput.files.length) return;
+
+            const selectedFile = fileInput.files[0];
+            if (selectedFile.size > MAX_UPLOAD_BYTES) {
+                document.getElementById('errorText').innerText =
+                    `File exceeds the 500MB upload limit (selected file is ${(selectedFile.size / (1024 * 1024)).toFixed(1)}MB).`;
+                document.getElementById('errorSection').style.display = 'block';
+                return;
+            }
+
+            document.getElementById('decompileForm').style.display = 'none';
+            document.getElementById('loadingOverlay').style.display = 'block';
+            document.getElementById('progressTrack').style.display = 'block';
+            document.getElementById('submitBtn').disabled = true;
+
+            const formData = new FormData();
+            formData.append('apk_file', selectedFile);
+
+            const xhr = new XMLHttpRequest();
+            xhr.timeout = 600000; // 10 minutes timeout for large APKs in Firefox/Chrome
+
+            xhr.upload.addEventListener('progress', (e) => {
+                if (e.lengthComputable) {
+                    const pct = (e.loaded / e.total) * 100;
+                    // Optional progress tracking hook
+                }
+            });
+
+            xhr.addEventListener('load', () => {
+                document.getElementById('loadingOverlay').style.display = 'none';
+                document.getElementById('progressTrack').style.display = 'none';
+                try {
+                    const result = JSON.parse(xhr.responseText);
+                    if (result.status === 'success') {
+                        document.getElementById('downloadLink').href = '/download_zip/' + result.zip_file;
+                        document.getElementById('downloadSection').style.display = 'block';
+                    } else {
+                        document.getElementById('errorText').innerText = result.message;
+                        document.getElementById('errorSection').style.display = 'block';
+                    }
+                } catch (err) {
+                    document.getElementById('errorText').innerText = "Failed to parse server response: " + err.message;
+                    document.getElementById('errorSection').style.display = 'block';
+                }
+            });
+
+            xhr.addEventListener('error', () => {
+                document.getElementById('loadingOverlay').style.display = 'none';
+                document.getElementById('progressTrack').style.display = 'none';
+                document.getElementById('errorText').innerText = "An unexpected network error occurred.";
+                document.getElementById('errorSection').style.display = 'block';
+            });
+
+            xhr.addEventListener('timeout', () => {
+                document.getElementById('loadingOverlay').style.display = 'none';
+                document.getElementById('progressTrack').style.display = 'none';
+                document.getElementById('errorText').innerText = "Decompilation timed out (exceeded 10 minutes limit).";
+                document.getElementById('errorSection').style.display = 'block';
+            });
+
+            xhr.open('POST', '/decompile', true);
+            xhr.send(formData);
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GhostShell - Deep Vulnerability Scan</title>
+    <!-- jsPDF Library for PDF Generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        :root {
+            --accent: #ff9800;
+            --high: #ff4444;
+            --medium: #ffbb33;
+            --low: #4CAF50;
+        }
+
+        * { box-sizing: border-box; }
+
+        body, html { margin: 0; height: 100%; font-family: sans-serif; color: white; }
+
+        .bg {
+            background-image: url("{{ url_for('static', filename='images/background.jpg') }}");
+            height: 100%; background-position: center; background-repeat: no-repeat; background-size: cover;
+            filter: blur(8px); -webkit-filter: blur(8px); position: fixed; width: 100%; z-index: -1;
+        }
+
+        .content { position: relative; z-index: 1; padding: 25px; text-align: center; }
+
+        .box {
+            background: rgba(0, 0, 0, 0.92); padding: 30px; display: inline-block; border-radius: 8px;
+            border: 1px solid var(--accent); width: 900px; max-width: 100%; text-align: left; box-sizing: border-box;
+        }
+
+        h2.title { text-align: center; color: var(--accent); margin-top: 0; }
+
+        label.field-label { font-size: 14px; color: #ccc; display: block; margin-bottom: 4px; }
+
+        input, button { margin: 10px 0; padding: 10px; font-size: 16px; width: 100%; box-sizing: border-box; }
+        button {
+            background: var(--accent); color: white; border: none; border-radius: 4px; cursor: pointer;
+            font-weight: bold; transition: 0.2s;
+        }
+        button:hover { background: #e68900; }
+        button:disabled { background: #666; cursor: not-allowed; }
+
+        .loading-container { display: none; text-align: center; margin-top: 15px; }
+        progress { width: 100%; height: 20px; accent-color: var(--accent); }
+
+        /* ---- Results ---- */
+        #results-section { display: none; margin-top: 20px; }
+
+        .summary-row {
+            display: flex; justify-content: center; gap: 14px; margin-bottom: 16px; flex-wrap: wrap;
+        }
+        .summary-chip {
+            font-size: 12px; padding: 6px 12px; border-radius: 999px; font-weight: bold;
+            background: #1a1a1a; border: 1px solid #333;
+        }
+        .summary-chip.high { color: var(--high); border-color: var(--high); }
+        .summary-chip.medium { color: var(--medium); border-color: var(--medium); }
+        .summary-chip.low { color: var(--low); border-color: var(--low); }
+
+        .report-container {
+            background: #111; border: 1px solid #333; padding: 15px; border-radius: 5px;
+            max-height: 460px; overflow-y: auto; font-family: 'Consolas', monospace; font-size: 12.5px;
+        }
+
+        .vuln-item {
+            background: #1a1a1a; border-left: 4px solid var(--high); padding: 14px 16px;
+            margin-bottom: 12px; border-radius: 3px;
+        }
+        .vuln-item.medium { border-left-color: var(--medium); }
+        .vuln-item.low { border-left-color: var(--low); }
+
+        .vuln-header {
+            display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px;
+            margin-bottom: 6px;
+        }
+        .vuln-title { color: #fff; font-weight: bold; font-size: 14px; margin: 0; }
+
+        .severity-badge {
+            font-size: 10.5px; font-weight: bold; letter-spacing: 0.5px; padding: 3px 8px;
+            border-radius: 3px; background: var(--high); color: #1a0000; text-transform: uppercase;
+        }
+        .severity-badge.medium { background: var(--medium); color: #2a1c00; }
+        .severity-badge.low { background: var(--low); color: #052a05; }
+
+        .vuln-meta { margin: 0 0 8px 0; color: #999; font-size: 12px; }
+        .vuln-meta .file-path { color: #fff; }
+        .vuln-meta .line-no { color: #ffff00; }
+
+        .code-box {
+            background: #000; color: #ff5555; padding: 8px 10px; border-radius: 3px; margin: 6px 0;
+            font-family: 'Consolas', monospace; white-space: pre-wrap; word-break: break-word;
+        }
+        .impact-line { margin: 8px 0; color: var(--accent); }
+        .fix-box {
+            background: #0b2210; color: #00ff00; padding: 8px 10px; border-radius: 3px; margin: 6px 0;
+            white-space: pre-wrap; word-break: break-word;
+        }
+
+        .empty-state { color: #888; font-size: 13px; text-align: center; padding: 20px 0; }
+
+        #error-section {
+            display: none; color: #ff4444; margin-top: 15px; font-size: 14px; text-align: center;
+        }
+
+        .back-link-row { text-align: center; margin-top: 20px; }
+        .back-link-row a { color: var(--accent); text-decoration: none; font-weight: bold; }
+        .back-link-row a:hover { text-decoration: underline; }
+
+        /* PDF Download Button Styling */
+        .pdf-btn {
+            background: #28a745;
+            width: auto;
+            padding: 8px 16px;
+            font-size: 14px;
+            margin: 10px auto;
+            display: none;
+        }
+        .pdf-btn:hover { background: #218838; }
+    </style>
+</head>
+<body>
+    <div class="bg"></div>
+    <div class="content">
+        <div class="box">
+            <h2 class="title">Deep Vulnerability Analysis &amp; Remediation</h2>
+
+            <form id="scan-form">
+                <label class="field-label" for="zip_file">Select Decompiled Project ZIP File:</label>
+                <input type="file" name="zip_file" id="zip_file" accept=".zip" required>
+                <button type="submit" id="submitBtn">Start Deep Analysis</button>
+            </form>
+
+            <div id="loading-container" class="loading-container">
+                <p style="color: #ff9800; font-weight: bold;" id="loadingTitle">🔍 Uploading &amp; Initializing Scan...</p>
+                <progress id="scanBar" value="0" max="100"></progress>
+                <p id="scanText" style="font-size: 13px; color: #aaa; margin-top: 8px;">Preparing codebase: 0%</p>
+            </div>
+
+            <div id="results-section">
+                <h3 style="text-align:center; color: #00ff00; margin-top: 0;">Security Analysis Complete &mdash; 100%</h3>
+                
+                <!-- Download PDF Button -->
+                <div style="text-align: center;">
+                    <button id="downloadPdfBtn" class="pdf-btn" onclick="downloadVulnerabilityPDF()">📥 Download Report as PDF</button>
+                </div>
+
+                <div id="summary-row" class="summary-row"></div>
+                <div id="report-container" class="report-container"></div>
+            </div>
+
+            <div id="error-section"></div>
+
+            <div class="back-link-row">
+                <a href="/dashboard">&larr; Back to Dashboard</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('scan-form');
+        const submitBtn = document.getElementById('submitBtn');
+        const loadingContainer = document.getElementById('loading-container');
+        const loadingTitle = document.getElementById('loadingTitle');
+        const scanBar = document.getElementById('scanBar');
+        const scanText = document.getElementById('scanText');
+        const resultsSection = document.getElementById('results-section');
+        const summaryRow = document.getElementById('summary-row');
+        const reportContainer = document.getElementById('report-container');
+        const errorSection = document.getElementById('error-section');
+        const downloadPdfBtn = document.getElementById('downloadPdfBtn');
+
+        let pollInterval = null;
+        let latestVulnerabilities = []; // Store vulnerabilities globally for PDF generation
+
+        function severityClass(sev) {
+            const s = (sev || '').toLowerCase();
+            return (s === 'medium' || s === 'low') ? s : 'high';
+        }
+
+        function renderSummary(reports) {
+            const counts = { high: 0, medium: 0, low: 0 };
+            reports.forEach(r => counts[severityClass(r.severity)]++);
+            summaryRow.innerHTML = `
+                <span class="summary-chip high">HIGH: ${counts.high}</span>
+                <span class="summary-chip medium">MEDIUM: ${counts.medium}</span>
+                <span class="summary-chip low">LOW: ${counts.low}</span>
+            `;
+        }
+
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str == null ? '' : String(str);
+            return div.innerHTML;
+        }
+
+        function renderReports(reports) {
+            latestVulnerabilities = reports || []; // Save to global variable
+
+            if (!reports || reports.length === 0) {
+                reportContainer.innerHTML = '<div class="empty-state">No issues found. Codebase looks clean. ✅</div>';
+                downloadPdfBtn.style.display = 'none'; // Hide if no issues
+                return;
+            }
+
+            // Show PDF download button if vulnerabilities exist
+            downloadPdfBtn.style.display = 'inline-block';
+
+            reportContainer.innerHTML = reports.map(r => {
+                const cls = severityClass(r.severity);
+                return `
+                    <div class="vuln-item ${cls}">
+                        <div class="vuln-header">
+                            <p class="vuln-title">${escapeHtml(r.issue)}</p>
+                            <span class="severity-badge ${cls}">${escapeHtml(r.severity)}</span>
+                        </div>
+                        <p class="vuln-meta">📄 File: <span class="file-path">${escapeHtml(r.file)}</span> | Line: <span class="line-no">${escapeHtml(r.line)}</span></p>
+                        <div class="code-box"><strong>Vulnerable Code:</strong> ${escapeHtml(r.snippet)}</div>
+                        <p class="impact-line"><strong>⚡ Impact:</strong> ${escapeHtml(r.impact)}</p>
+                        <div class="fix-box"><strong>🛡️ Remediation Instruction:</strong> ${escapeHtml(r.remediation)}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // PDF Generation Function
+        function downloadVulnerabilityPDF() {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(18);
+            doc.text("GhostShell - Security Vulnerability Report", 14, 20);
+
+            doc.setFontSize(10);
+            doc.setFont("helvetica", "normal");
+            doc.text("Generated by Ghost Shell Advanced Security Suite", 14, 27);
+            doc.text("Date: " + new Date().toLocaleString(), 14, 33);
+
+            let yPos = 45;
+
+            if (latestVulnerabilities.length === 0) {
+                doc.text("No vulnerabilities found.", 14, yPos);
+            } else {
+                latestVulnerabilities.forEach((vuln, index) => {
+                    if (yPos > 260) { // Add new page if space runs out
+                        doc.addPage();
+                        yPos = 20;
+                    }
+
+                    doc.setFont("helvetica", "bold");
+                    doc.setFontSize(11);
+                    doc.text(`${index + 1}. [${vuln.severity}] ${vuln.issue}`, 14, yPos);
+                    yPos += 6;
+
+                    doc.setFont("helvetica", "normal");
+                    doc.setFontSize(10);
+                    doc.text(`File: ${vuln.file} (Line: ${vuln.line})`, 18, yPos);
+                    yPos += 5;
+
+                    doc.text(`Snippet: ${vuln.snippet}`, 18, yPos);
+                    yPos += 5;
+
+                    doc.text(`Impact: ${vuln.impact}`, 18, yPos);
+                    yPos += 5;
+
+                    doc.text(`Remediation: ${vuln.remediation}`, 18, yPos);
+                    yPos += 10;
+                });
+            }
+
+            doc.save("GhostShell_Security_Report.pdf");
+        }
+
+        form.addEventListener('submit', async function (e) {
+            e.preventDefault();
+
+            errorSection.style.display = 'none';
+            resultsSection.style.display = 'none';
+            downloadPdfBtn.style.display = 'none';
+
+            const fileInput = document.getElementById('zip_file');
+            if (!fileInput.files.length) return;
+
+            form.style.display = 'none';
+            loadingContainer.style.display = 'block';
+            submitBtn.disabled = true;
+
+            const formData = new FormData();
+            formData.append('zip_file', fileInput.files[0]);
+
+            try {
+                const response = await fetch('/start_deep_scan', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+
+                if (!response.ok || data.status !== 'success') {
+                    throw new Error(data.message || 'Failed to start deep scan');
+                }
+
+                const scanId = data.scan_id;
+
+                pollInterval = setInterval(async () => {
+                    try {
+                        const progRes = await fetch(`/scan_progress/${scanId}`);
+                        const progData = await progRes.json();
+
+                        const progress = progData.progress || 0;
+                        scanBar.value = progress;
+                        scanText.innerText = `${progData.status} (${progress}%)`;
+
+                        if (progress >= 100) {
+                            clearInterval(pollInterval);
+                            loadingContainer.style.display = 'none';
+                            renderSummary(progData.vulnerabilities || []);
+                            renderReports(progData.vulnerabilities || []);
+                            resultsSection.style.display = 'block';
+                        }
+                    } catch (pollErr) {
+                        console.error("Polling error:", pollErr);
+                    }
+                }, 500);
+
+            } catch (err) {
+                if (pollInterval) clearInterval(pollInterval);
+                loadingContainer.style.display = 'none';
+                form.style.display = 'block';
+                submitBtn.disabled = false;
+                errorSection.textContent = `Error: ${err.message}`;
+                errorSection.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>

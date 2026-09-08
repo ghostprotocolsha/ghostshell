@@ -1,0 +1,6 @@
+venv/
+uploads/
+decompiled/
+apktool_tmp/
+__pycache__/
+*.apk
